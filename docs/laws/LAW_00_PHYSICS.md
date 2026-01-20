@@ -1,201 +1,220 @@
 # LAW_00_PHYSICS.md
-## CommanderLink – Physikalisches Grundgesetz
-
-### Status
-VERBINDLICH · NORMATIV · NICHT DISKUTABEL
+STATUS: CANONICAL · FROZEN · SSOT  
+VERSION: 1.1  
+APPLIES TO: CommanderLink (Runtime, HAL, CORE, LINK, FLOW, ORACLE, MONITOR, Tooling)
 
 ---
 
 ## 0. Präambel
 
-CommanderLink ist ein physikalisches System.  
-Alle weiteren Gesetze, Verträge, Header und Implementierungen sind diesem Gesetz untergeordnet.
+CommanderLink ist ein physikalisch deterministisches System.
 
-Physik ist die oberste Autorität.  
-Spezifikationen, Konventionen, Standards und „Best Practices“ haben keinerlei Vorrang.
+Es existiert, um **Wahrheit** aus realer Hardware, Zeit und Topologie zu gewinnen,
+zu stabilisieren und kontrolliert verfügbar zu machen.
 
----
+CommanderLink optimiert **nicht** für Komfort, Kompatibilität oder Konvention,
+sondern für:
 
-## 1. Rangordnung der Wahrheit
+- Determinismus
+- Reproduzierbarkeit
+- Worst-Case-Stabilität
+- Maschinen-Wahrheit
 
-Die Gültigkeit von Aussagen, Entscheidungen und Messungen folgt strikt dieser Ordnung:
-
-1. Physikalische Realität (Zeit, Energie, Temperatur, elektrische Grenzen)
-2. Mikroarchitektur (Caches, Pipelines, TLBs, SIMD, NUMA)
-3. Konkrete Hardware-Implementierung (x86_64, reale CPUs, reale NICs)
-4. ABI-Verträge (Binärlayout, Alignment, Atomics)
-5. Betriebssystem-Verträge
-6. Protokolle und formale Spezifikationen
-
-Bei Konflikt gilt immer die höhere Ebene.  
-Ein Verstoß gegen diese Ordnung ist ein Designfehler.
+Alles andere ist nachrangig.
 
 ---
 
-## 2. Zeit ist endlich
+## 1. Rangordnung der Wahrheit (absolut bindend)
 
-Zeit ist eine physikalische Ressource.
+Bei jedem Konflikt gilt ausschließlich folgende Reihenfolge:
 
-* Jede Operation verbraucht Zeit.
-* Zeit kann nicht parallelisiert werden.
-* Zeit kann nicht abstrahiert werden.
+1. Physik  
+   (Elektrik, Thermik, Zeit, Bandbreite, Latenz, Energie)
+2. Mikroarchitektur  
+   (Caches, TLBs, SIMD, DMA, PCIe)
+3. ABI / Layout  
+   (Alignment, Cachelines, Epochs, Presence)
+4. Betriebssystem  
+   (Syscalls, Schedulers, Permissions)
+5. Industrie-Standards  
+   (TCP, POSIX, APIs, RFCs)
 
-Folgerungen:
-- Worst-Case-Zeit ist maßgeblich, nicht Durchschnittswerte.
-- Jitter ist ein Fehler, kein Statistikproblem.
-- Ungebundene Wartezeiten sind verboten.
-
----
-
-## 3. Energie ist endlich
-
-Energie ist begrenzt und messbar.
-
-* CPU-Zyklen sind Energieverbrauch.
-* Speicherzugriffe sind Energieverbrauch.
-* Netzwerktransfers sind Energieverbrauch.
-
-Folgerungen:
-- Jede Berechnung muss eine energetische Rechtfertigung haben.
-- Aggressive Nutzung ist erlaubt, ineffiziente Nutzung nicht.
-- Thermische Grenzen sind harte Grenzen, keine Hinweise.
+**Ein Standard kann physikalisch falsch sein.**  
+**Physik ist niemals verhandelbar.**
 
 ---
 
-## 4. Temperatur ist ein Zwang
+## 2. Determinismus als Grundzustand
 
-Temperatur ist ein nicht verhandelbarer Zustand.
+CommanderLink kennt keinen impliziten „best effort“-Modus.
 
-* Drosselung ist physikalisch, nicht logisch.
-* Thermische Effekte treten verzögert auf.
-* Überschreitung führt zu nichtlinearem Verhalten.
+Jeder Zustand ist entweder:
 
-Folgerungen:
-- Thermische Gates sind sofort wirksam.
-- Kein Mechanismus darf Temperatur ignorieren.
-- Performance ohne thermische Stabilität ist ungültig.
+- **deterministisch gültig**, oder
+- **explizit degradiert**, mit Kennzeichnung:
+src = DIRECT | ESTIMATED | UNSUPPORTED
+qual = OK | DEGRADED | INVALID
+reason = P0..P5
 
----
 
-## 5. Speicher ist physikalisch
-
-Speicher ist kein abstrakter Raum.
-
-* Cache-Lines haben feste Größe.
-* Alignment ist real.
-* Falsches Layout erzeugt reale Kosten.
-
-Folgerungen:
-- Implizites Padding ist verboten.
-- Layouts müssen cacheline-exakt sein.
-- Speicherzugriffe werden nach physikalischer Nähe bewertet.
+Stille Defaults, implizite Nullen oder UI-Heuristiken sind verboten.
 
 ---
 
-## 6. Parallelität ist begrenzt
+## 3. Zeit ist eine physikalische Ressource
 
-Parallelität existiert nur dort, wo Hardware sie zulässt.
+Zeit ist kein Hilfswert, sondern eine **erste-Klasse-Wahrheit**.
 
-* Kerne sind endlich.
-* Ausführungseinheiten sind endlich.
-* Bandbreite ist endlich.
+Pflichten:
 
-Folgerungen:
-- Oversubscription ist ein Fehler.
-- Software darf keine fiktive Parallelität annehmen.
-- Scheduling darf keine physikalischen Konflikte erzeugen.
+- Monotone Zeitbasis (z. B. CLOCK_MONOTONIC)
+- Reproduzierbare Messfenster
+- Begrenzte (bounded) Schleifen
+- Kein Debug-Output, der Zeit zerstört
 
----
-
-## 7. Latenz ist eine Eigenschaft, kein Parameter
-
-Latenz entsteht aus Physik.
-
-* Entfernung
-* Zwischenspeicher
-* Synchronisation
-
-Folgerungen:
-- Latenz kann gemessen, nicht „konfiguriert“ werden.
-- Latenzreduktion hat Vorrang vor Durchsatzsteigerung, sofern stabil.
-- Ungebundene Latenzpfade sind verboten.
+Wenn Zeit nicht stabil ist → **P0 oder P1**, je nach Modul.
 
 ---
 
-## 8. Bandbreite ist ein Fluss
+## 4. Energie und Thermik sind Systemzustände
 
-Bandbreite ist kontinuierlich, nicht paketweise.
+Thermik, Power-Limits und Throttling sind **keine Umgebung**, sondern Teil der Wahrheit.
 
-* Burst-Verhalten erzeugt Störungen.
-* Gleichmäßigkeit ist stabiler als Spitzen.
+Wenn:
 
-Folgerungen:
-- Pacing ist Pflicht.
-- Backpressure ist Pflicht.
-- Drops sind ein physikalisches Versagen.
+- CPU throttled
+- NIC Queues überlaufen
+- VRM / Power Caps greifen
 
----
+→ dann **muss** CL das sehen und berücksichtigen.
 
-## 9. Messung ist Teil des Systems
-
-Ein System ohne Messung ist blind.
-
-* Messung darf das System nicht destabilisieren.
-* Messung muss zeitlich korrekt sein.
-* Messung ist Wahrheit, nicht Interpretation.
-
-Folgerungen:
-- Messpfade sind physikalisch zu budgetieren.
-- Heuristiken ersetzen keine Messung.
-- Logs sind sekundär gegenüber direkter Telemetrie.
+Ignorieren gilt als physikalischer Fehler.
 
 ---
 
-## 10. Determinismus ist ein physikalisches Ziel
+## 5. Speicher ist Physik
 
-Determinismus bedeutet:
-Gleiche Bedingungen → gleiches Verhalten.
+Speicher ist kein abstrakter Pool.
 
-Folgerungen:
-- Zufälligkeit ist verboten.
-- „Best Effort“ ist verboten.
-- Nichtdeterministische APIs sind zu kapseln oder auszuschließen.
+Er ist ein physikalischer Raum mit:
 
----
+- Cachelines (64 B als atomare Einheit)
+- NUMA-Topologie
+- TLB-Grenzen
+- DMA-Kohärenz
 
-## 11. Fehler sind Zustände, keine Ausnahmen
+Konsequenzen:
 
-Fehler entstehen aus Physik.
-
-* Überlast
-* Hitze
-* Zeitüberschreitung
-* Ressourcenmangel
-
-Folgerungen:
-- Fehlerpfade sind gleichwertige Pfade.
-- Recovery ist Teil des Normalbetriebs.
-- Undefined Behavior ist verboten.
+- Alle Runtime-Strukturen sind cacheline-exakt
+- Layout ist ABI-fest, nicht „compilerfreundlich“
+- Shared Memory ist Wahrheit, kein Transport
 
 ---
 
-## 12. Architekturbindung
+## 6. Cacheline-Souveränität
 
-CommanderLink ist primär x86_64-gebunden.
+Die Cacheline ist die kleinste atomare Wahrheitseinheit.
 
-* Little-Endian ist gegeben.
-* Cache-Line-Größe ist bekannt.
-* SIMD-Eigenschaften sind explizit.
+Regeln:
 
-Portabilität ist nachrangig gegenüber physikalischer Korrektheit.
+- Hot / Warm / Cold sind cacheline-basiert
+- Kein implizites Padding
+- Jeder Writer hat einen klaren Commit-Punkt
+- Leser interpretieren nicht, sie **lesen**
+
+---
+
+## 7. Zero-Transformation-Prinzip
+
+CommanderLink transformiert keine Daten heimlich.
+
+Verboten sind:
+
+- implizite Normalisierungen
+- UI-Abkürzungen
+- stilles Runden
+- „das sieht ungefähr so aus“
+
+Wenn etwas geschätzt wird, **steht es dabei**.
+
+---
+
+## 8. Maximierung mit Gates
+
+CommanderLink strebt maximale Performance an,
+aber **nur innerhalb physikalischer Schranken**.
+
+Gates können schließen wegen:
+
+- Thermik
+- Power
+- Budget
+- Link-Health
+- Identity / Trust
+- Safety / Watchdog
+
+Ein geschlossenes Gate erzwingt **deterministischen Rückfall**.
+Kein Blackhole, kein Stillstand, kein Chaos.
+
+---
+
+## 9. SIMD ist Baseline
+
+SIMD ist kein Feature, sondern Normalzustand.
+
+- Plattformabhängige Mindestannahmen sind erlaubt
+- Höhere SIMD-Stufen sind gated
+- Fallback ist sofort und deterministisch
+
+---
+
+## 10. Koexistenz statt Zerstörung
+
+CommanderLink ist ein **Symbiont**, kein Eroberer.
+
+- Management bleibt OS-nativ
+- Dataplane darf ersetzt/beschleunigt werden
+- Fallback **muss immer funktionieren**
+- Redirect darf niemals das OS lahmlegen
+
+---
+
+## 11. Auditierbarkeit
+
+Jede Aussage des Systems muss belegbar sein.
+
+Pflichten:
+
+- Root / TOC / ABI sind prüfbar
+- Epoch == 0 → UNINITIALIZED
+- Epoch > 0 → VALID
+- Presence == RECLAIMED → Abwesenheit
+- Fehler sind priorisiert (P0–P5)
+
+Es gibt keine „magischen“ Zustände.
+
+---
+
+## 12. Ableitungsregel für alle weiteren Laws
+
+Jedes weitere LAW oder Contract muss:
+
+1. mit LAW_00_PHYSICS konsistent sein
+2. physikalische Rangordnung respektieren
+3. Commit-/Epoch-Semantik definieren
+4. Doppelwahrheit verhindern
+
+Verletzt ein Dokument dieses Gesetz,
+ist es **ungültig**, unabhängig von Version oder Autor.
 
 ---
 
 ## 13. Schlussformel
 
-Wenn eine Entscheidung physikalisch falsch ist,
-ist sie falsch – unabhängig von Eleganz, Konformität oder Konvention.
+Physikalisch falsch bleibt falsch.  
+Auch wenn es standardkonform ist.
 
-Dieses Gesetz ist unveränderlich.  
-Alle weiteren Gesetze müssen ihm widerspruchsfrei folgen.
+CommanderLink folgt nicht Standards.  
+CommanderLink folgt Wahrheit.
+
 
