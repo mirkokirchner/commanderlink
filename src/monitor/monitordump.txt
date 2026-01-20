@@ -1,0 +1,692 @@
+
+>>> START FILE: ./monitor.c
+#define _POSIX_C_SOURCE 200809L
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+
+#include "monitor_curses.h"
+#include "monitor_ui.h"
+#include "monitor_state.h"
+#include "monitor_input.h"
+#include "monitor_shm.h" /* WICHTIG: Neue API */
+#include "tabs.h"
+
+int main(void) {
+    cl_monitor_state_t *st = monitor_state();
+    
+    /* Neue API Verbindung */
+    mon_shm_connect(st);
+
+    ui_init();
+
+    while (st->running) {
+        ui_draw_screen_bg();
+        
+        char title_buf[128];
+        const char *tab_name = "Unknown";
+        switch (st->active_tab) {
+            case TAB_DASHBOARD: tab_name = "Dashboard"; break;
+            case TAB_CPU:       tab_name = "CPU Core Physics"; break;
+            case TAB_MEM:       tab_name = "Memory Matrix"; break;
+            default:            tab_name = "Section"; break;
+        }
+        snprintf(title_buf, sizeof(title_buf), "CommanderLink Monitor - %s", tab_name);
+        ui_draw_header(title_buf, " F1:Dash  F2:CPU  F3:Mem  F10:Quit");
+        
+        int h = getmaxy(stdscr);
+        int w = getmaxx(stdscr);
+        
+        /* Zeichnen */
+        switch (st->active_tab) {
+            case TAB_DASHBOARD: tab_dashboard_draw(h, w); break;
+            case TAB_CPU:       /* Placeholder oder Implementierung */ break;
+            case TAB_MEM:       /* Placeholder */ break;
+            default: break;
+        }
+
+        /* Statusbar & Reconnect Logic */
+        char status_right[64];
+        if (st->core_base) {
+            snprintf(status_right, sizeof(status_right), "SHM: ONLINE (%zu B)", st->core_size);
+        } else {
+            snprintf(status_right, sizeof(status_right), "SHM: SEARCHING...");
+            mon_shm_connect(st); /* Auto-Reconnect Versuch jeden Frame */
+        }
+        
+        ui_draw_statusbar(" TAB/Arrows: Switch Tab | ENTER: Select", status_right);
+
+        refresh();
+        monitor_handle_input(getch());
+    }
+
+    ui_shutdown();
+    mon_shm_disconnect(st);
+    
+    return 0;
+}
+
+<<< END FILE: ./monitor.c
+
+>>> START FILE: ./monitor_curses.h
+#ifndef CL_MONITOR_CURSES_H
+#define CL_MONITOR_CURSES_H
+
+#if defined(__sun)
+/* OmniOS/illumos: ncurses header is available as ncurses/ncurses.h -> curses.h */
+  #include <ncurses/ncurses.h>
+#else
+  /* Linux + BSD */
+  #include <ncurses.h>
+#endif
+
+#endif
+
+
+<<< END FILE: ./monitor_curses.h
+
+>>> START FILE: ./monitor_input.c
+#include "monitor_curses.h" // Für Key-Definitionen
+#include "monitor_state.h"
+#include "tabs.h"
+
+void monitor_handle_input(int key) {
+    cl_monitor_state_t *st = monitor_state();
+
+    switch (key) {
+        /* --- GLOBAL NAVIGATION --- */
+        
+        /* TAB oder RECHTS -> Nächster Tab */
+        case '\t': 
+        case KEY_RIGHT:
+            st->active_tab = (st->active_tab + 1) % TAB_COUNT;
+            break;
+
+        /* SHIFT+TAB (Backtab) oder LINKS -> Vorheriger Tab */
+        case KEY_BTAB: // Shift-Tab (wird von vielen Terminals unterstützt)
+        case KEY_LEFT:
+            /* Trick für Modulo mit negativen Zahlen in C: + COUNT addieren */
+            st->active_tab = (st->active_tab - 1 + TAB_COUNT) % TAB_COUNT;
+            break;
+
+        /* F-Keys direkt */
+        case KEY_F(1): st->active_tab = TAB_DASHBOARD; break;
+        case KEY_F(2): st->active_tab = TAB_CPU; break;
+        case KEY_F(3): st->active_tab = TAB_MEM; break;
+        
+        case KEY_F(10): 
+        case 27: /* ESC */
+            st->running = 0; 
+            break;
+
+        /* --- CONTENT PASS-THROUGH --- */
+        default:
+            /* Input an den aktiven Tab weiterreichen (z.B. für Scrollen in Listen) */
+            if (st->active_tab == TAB_DASHBOARD) {
+                tab_dashboard_input(key);
+            }
+            break;
+    }
+}
+
+<<< END FILE: ./monitor_input.c
+
+>>> START FILE: ./monitor_input.h
+#ifndef CL_MONITOR_INPUT_H
+#define CL_MONITOR_INPUT_H
+
+void monitor_handle_input(int key);
+
+#endif
+
+<<< END FILE: ./monitor_input.h
+
+>>> START FILE: ./monitor_shm.c
+#define _POSIX_C_SOURCE 200809L
+#include "monitor_shm.h"
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+
+void mon_shm_connect(cl_monitor_state_t *st) {
+    /* Reset */
+    st->core_base = NULL;
+    st->core_size = 0;
+
+    int fd = shm_open(CL_CORE_SHM_NAME, O_RDONLY, 0);
+    if (fd == -1) return; 
+
+    struct stat sb;
+    if (fstat(fd, &sb) == -1) { close(fd); return; }
+
+    void *map = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+
+    if (map == MAP_FAILED) return;
+
+    if (sb.st_size < sizeof(cl_root_4096_t)) {
+        munmap(map, sb.st_size);
+        return;
+    }
+
+    st->core_base = map;
+    st->core_size = (size_t)sb.st_size;
+}
+
+void mon_shm_disconnect(cl_monitor_state_t *st) {
+    if (st->core_base && st->core_base != MAP_FAILED) {
+        munmap(st->core_base, st->core_size);
+    }
+    st->core_base = NULL;
+    st->core_size = 0;
+}
+
+const cl_root_4096_t* mon_get_root(cl_monitor_state_t *st) {
+    if (!st->core_base) return NULL;
+    const cl_root_4096_t *r = (const cl_root_4096_t*)st->core_base;
+    if (r->root_magic != CL_ROOT_MAGIC_U32) return NULL;
+    return r;
+}
+
+const cl_toc_t* mon_get_toc(cl_monitor_state_t *st, const cl_root_4096_t *root) {
+    if (!root) return NULL;
+    if (root->toc_offset >= st->core_size) return NULL;
+    if (root->toc_offset + sizeof(cl_toc_header_t) > st->core_size) return NULL;
+
+    const cl_toc_t *toc = (const cl_toc_t*)((const uint8_t*)st->core_base + root->toc_offset);
+    
+    /* Grober Bounds Check für den ganzen TOC */
+    size_t toc_min_size = sizeof(cl_toc_header_t) + (toc->header.entry_count * sizeof(cl_toc_entry_t));
+    if (root->toc_offset + toc_min_size > st->core_size) return NULL;
+
+    return toc;
+}
+
+const cl_toc_entry_t* mon_find_entry(cl_monitor_state_t *st, const cl_toc_t *toc, uint16_t seg_type) {
+    (void)st;
+    if (!toc) return NULL;
+    for (uint32_t i = 0; i < toc->header.entry_count; i++) {
+        if (toc->entries[i].type == seg_type) return &toc->entries[i];
+    }
+    return NULL;
+}
+
+const void* mon_map_segment(cl_monitor_state_t *st, const cl_toc_entry_t *e, uint32_t idx) {
+    if (!st->core_base || !e) return NULL;
+    if (idx >= e->count) return NULL;
+
+    uint64_t start = e->offset_bytes + (idx * (uint64_t)e->stride_bytes);
+    if (start + e->stride_bytes > st->core_size) return NULL;
+
+    return (const void*)((const uint8_t*)st->core_base + start);
+}
+
+<<< END FILE: ./monitor_shm.c
+
+>>> START FILE: ./monitor_shm.h
+#ifndef CL_MONITOR_SHM_H
+#define CL_MONITOR_SHM_H
+
+#include <stdint.h>
+#include "monitor_state.h"
+
+/* Runtime Headers */
+#include "../../include/cl_runtime/cl_shm_layout.h"
+#include "../../include/cl_runtime/cl_toc.h"
+
+void mon_shm_connect(cl_monitor_state_t *st);
+void mon_shm_disconnect(cl_monitor_state_t *st);
+
+const cl_root_4096_t* mon_get_root(cl_monitor_state_t *st);
+const cl_toc_t* mon_get_toc(cl_monitor_state_t *st, const cl_root_4096_t *root);
+const cl_toc_entry_t* mon_find_entry(cl_monitor_state_t *st, const cl_toc_t *toc, uint16_t seg_type);
+const void* mon_map_segment(cl_monitor_state_t *st, const cl_toc_entry_t *e, uint32_t idx);
+
+#endif
+
+<<< END FILE: ./monitor_shm.h
+
+>>> START FILE: ./monitor_state.c
+#include "monitor_state.h"
+
+static cl_monitor_state_t g_state = {
+    .active_tab = TAB_DASHBOARD,
+    .running = 1
+};
+
+cl_monitor_state_t* monitor_state(void) {
+    return &g_state;
+}
+
+<<< END FILE: ./monitor_state.c
+
+>>> START FILE: ./monitor_state.h
+#ifndef CL_MONITOR_STATE_H
+#define CL_MONITOR_STATE_H
+
+#include <stddef.h> /* size_t */
+
+typedef enum {
+    TAB_DASHBOARD = 0,
+    TAB_CPU,
+    TAB_MEM,
+    TAB_COUNT
+} cl_mon_tab_t;
+
+typedef struct {
+    cl_mon_tab_t active_tab;
+    int running;
+    
+    /* Der Live-Pointer ins SHM */
+    void *core_base;    
+    size_t core_size;
+
+} cl_monitor_state_t;
+
+cl_monitor_state_t* monitor_state(void);
+
+#endif
+
+<<< END FILE: ./monitor_state.h
+
+>>> START FILE: ./monitor_ui.c
+#include "monitor_ui.h"
+#include <string.h>
+
+void ui_init(void) {
+    initscr();
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
+    curs_set(0); /* Cursor verstecken */
+    start_color();
+
+    /* TVision Palette definieren */
+    init_pair(CL_COLOR_BG,     COLOR_WHITE, COLOR_BLUE);
+    init_pair(CL_COLOR_TITLE,  COLOR_BLACK, COLOR_CYAN);
+    init_pair(CL_COLOR_STATUS, COLOR_BLACK, COLOR_WHITE);
+    init_pair(CL_COLOR_TEXT,   COLOR_BLACK, COLOR_BLUE);
+    init_pair(CL_COLOR_ALERT,  COLOR_BLACK, COLOR_RED);
+}
+
+void ui_shutdown(void) {
+    endwin();
+}
+
+void ui_draw_screen_bg(void) {
+    bkgd(COLOR_PAIR(CL_COLOR_BG));
+    clear();
+}
+
+void ui_draw_header(const char *title, const char *subtitle) {
+    int w = getmaxx(stdscr);
+    attron(COLOR_PAIR(CL_COLOR_TITLE));
+    mvprintw(0, 0, " %s", title);
+    for (int i = strlen(title) + 1; i < w; i++) addch(' ');
+    
+    /* F-Keys Leiste drunter */
+    mvprintw(1, 0, " %s", subtitle);
+    for (int i = strlen(subtitle) + 1; i < w; i++) addch(' ');
+    attroff(COLOR_PAIR(CL_COLOR_TITLE));
+}
+
+void ui_draw_statusbar(const char *status_left, const char *status_right) {
+    int h = getmaxy(stdscr);
+    int w = getmaxx(stdscr);
+    
+    attron(COLOR_PAIR(CL_COLOR_STATUS));
+    move(h-1, 0);
+    for(int i=0; i<w; i++) addch(' ');
+    mvprintw(h-1, 1, "%s", status_left);
+    mvprintw(h-1, w - strlen(status_right) - 1, "%s", status_right);
+    attroff(COLOR_PAIR(CL_COLOR_STATUS));
+}
+
+void ui_draw_box(int y, int x, int h, int w, const char *title) {
+    /* Rahmen zeichnen */
+    attron(COLOR_PAIR(CL_COLOR_BG));
+    /* Ecken und Linien (ACS = Alternate Character Set) */
+    mvaddch(y, x, ACS_ULCORNER);
+    mvaddch(y, x + w - 1, ACS_URCORNER);
+    mvaddch(y + h - 1, x, ACS_LLCORNER);
+    mvaddch(y + h - 1, x + w - 1, ACS_LRCORNER);
+    
+    for (int i = 1; i < w - 1; i++) {
+        mvaddch(y, x + i, ACS_HLINE);
+        mvaddch(y + h - 1, x + i, ACS_HLINE);
+    }
+    for (int i = 1; i < h - 1; i++) {
+        mvaddch(y + i, x, ACS_VLINE);
+        mvaddch(y + i, x + w - 1, ACS_VLINE);
+    }
+    
+    /* Titel mittig im oberen Rahmen */
+    if (title) {
+        attron(A_BOLD);
+        mvprintw(y, x + 2, " %s ", title);
+        attroff(A_BOLD);
+    }
+}
+
+void ui_draw_label_value(int y, int x, const char *label, const char *value) {
+    attron(COLOR_PAIR(CL_COLOR_BG));
+    mvprintw(y, x, "%s:", label);
+    attron(COLOR_PAIR(CL_COLOR_TEXT) | A_BOLD);
+    mvprintw(y, x + strlen(label) + 2, "%s", value);
+    attroff(A_BOLD);
+}
+
+void ui_draw_progressbar(int y, int x, int width, int permille, int color_pair) {
+    if (width < 3) return;
+    
+    int fill_w = (width * permille) / 1000;
+    if (fill_w > width) fill_w = width;
+    
+    attron(COLOR_PAIR(color_pair));
+    
+    /* Rahmen optional oder direkt Balken */
+    mvprintw(y, x, "[");
+    for (int i = 0; i < width - 2; i++) {
+        if (i < fill_w) addch('|'); // Oder ACS_BLOCK für vollen Block
+        else addch('.');
+    }
+    mvprintw(y, x + width - 1, "]");
+    
+    /* Prozentzahl in die Mitte (optional) */
+    char buf[16];
+    snprintf(buf, sizeof(buf), " %3d%% ", permille / 10);
+    if ((int)strlen(buf) < width - 4) {
+        mvprintw(y, x + (width/2) - (strlen(buf)/2), "%s", buf);
+    }
+    
+    attroff(COLOR_PAIR(color_pair));
+}
+
+<<< END FILE: ./monitor_ui.c
+
+>>> START FILE: ./monitor_ui.h
+#ifndef CL_MONITOR_UI_H
+#define CL_MONITOR_UI_H
+
+#include "monitor_curses.h"
+
+/* Farben (TVision Style) */
+#define CL_COLOR_BG       1  /* Blau / Weiß */
+#define CL_COLOR_TITLE    2  /* Schwarz / Cyan */
+#define CL_COLOR_STATUS   3  /* Schwarz / Grau */
+#define CL_COLOR_TEXT     4  /* Weiß / Blau */
+#define CL_COLOR_ALERT    5  /* Weiß / Rot */
+
+void ui_init(void);
+void ui_shutdown(void);
+
+/* Zeichen-Primitive */
+void ui_draw_screen_bg(void);
+void ui_draw_header(const char *title, const char *subtitle);
+void ui_draw_statusbar(const char *status_left, const char *status_right);
+void ui_draw_box(int y, int x, int h, int w, const char *title);
+void ui_draw_label_value(int y, int x, const char *label, const char *value);
+void ui_draw_progressbar(int y, int x, int width, int permille, int color_pair);
+
+#endif
+
+<<< END FILE: ./monitor_ui.h
+
+>>> START FILE: ./tabs.h
+#ifndef CL_TABS_H
+#define CL_TABS_H
+
+#include "monitor_curses.h"
+
+/* Jeder Tab muss diese Signatur haben */
+typedef void (*tab_draw_fn)(int h, int w);
+typedef void (*tab_input_fn)(int key);
+
+/* Dashboard Tab (Demo) */
+void tab_dashboard_draw(int h, int w);
+void tab_dashboard_input(int key);
+
+#endif
+
+<<< END FILE: ./tabs.h
+
+>>> START FILE: ./tabs/tab_dashboard.c
+#define _POSIX_C_SOURCE 200809L
+#include <stdio.h>
+#include <string.h>
+#include <inttypes.h>
+#include <math.h>
+
+#include "../monitor_ui.h"
+#include "../monitor_curses.h"
+#include "../tabs.h"
+#include "../monitor_state.h"
+#include "../monitor_shm.h" // Unsere neue SSOT API
+
+/* Runtime Headers für die Struct-Casts */
+#include "../../../include/cl_runtime/cl_seg_cpu_1024.h"
+#include "../../../include/cl_runtime/cl_seg_mem_256.h"
+#include "../../../include/cl_runtime/cl_seg_dma_4096.h"
+#include "../../../include/cl_runtime/cl_seg_zfs_4096.h"
+
+/* --- Helpers --- */
+
+static void fmt_size(char *buf, size_t sz, uint64_t bytes) {
+    const double GiB = 1024.0 * 1024.0 * 1024.0;
+    const double MiB = 1024.0 * 1024.0;
+    
+    if (bytes >= GiB) snprintf(buf, sz, "%.2f GiB", (double)bytes / GiB);
+    else if (bytes >= MiB) snprintf(buf, sz, "%.2f MiB", (double)bytes / MiB);
+    else snprintf(buf, sz, "%" PRIu64 " B", bytes);
+}
+
+static void fmt_time(char *buf, size_t sz, uint64_t ns) {
+    uint64_t s = ns / 1000000000ULL;
+    uint32_t h = s / 3600;
+    uint32_t m = (s % 3600) / 60;
+    uint32_t sec = s % 60;
+    snprintf(buf, sz, "%02u:%02u:%02u", h, m, sec);
+}
+
+/* --- Drawing --- */
+
+void tab_dashboard_draw(int h, int w) {
+    cl_monitor_state_t *st = monitor_state();
+
+    /* 1. SSOT: Root holen */
+    const cl_root_4096_t *root = mon_get_root(st);
+    if (!root) {
+        ui_draw_box(h/2-2, w/2-20, 5, 40, "OFFLINE");
+        mvprintw(h/2, w/2-15, "Waiting for Shared Memory...");
+        return;
+    }
+
+    /* 2. SSOT: TOC holen */
+    const cl_toc_t *toc = mon_get_toc(st, root);
+    if (!toc) {
+        ui_draw_box(h/2-2, w/2-20, 5, 40, "ERROR");
+        mvprintw(h/2, w/2-15, "TOC Integrity Check Failed");
+        return;
+    }
+
+    /* 3. Layout Grid berechnen */
+    int col_width = (w / 2) - 2;
+    int col2_x = col_width + 4;
+    
+    /* --- SECTION: GLOBAL HEALTH (Oben) --- */
+    ui_draw_box(2, 2, 5, w-4, "System Health");
+    
+    char tbuf[64];
+    fmt_time(tbuf, sizeof(tbuf), atomic_load(&root->uptime_ns));
+    ui_draw_label_value(4, 4, "Uptime", tbuf);
+
+    uint64_t seq = atomic_load(&root->seq_cnt);
+    snprintf(tbuf, sizeof(tbuf), "%" PRIu64, seq);
+    ui_draw_label_value(4, 30, "Heartbeat", tbuf);
+
+    uint32_t rx = atomic_load(&root->rx_gate);
+    uint32_t tx = atomic_load(&root->tx_gate);
+    
+    attron(COLOR_PAIR(CL_COLOR_TEXT));
+    mvprintw(4, 55, "GATES: RX[%c] TX[%c]", 
+             rx ? 'X' : 'O', 
+             tx ? 'X' : 'O');
+    attroff(COLOR_PAIR(CL_COLOR_TEXT));
+
+
+    /* --- SECTION: COMPUTE UNIT (Links) --- */
+    ui_draw_box(7, 2, 14, col_width, "Compute Unit (CPU)");
+    
+    const cl_toc_entry_t *e_cpu = mon_find_entry(st, toc, CL_CPU_SEG_1024);
+    if (e_cpu) {
+        uint32_t count = e_cpu->count;
+        uint64_t load_sum = 0;
+        uint64_t temp_sum = 0;
+        char model[64] = "Unknown";
+
+        /* Aggregate Stats */
+        for (uint32_t i=0; i<count; i++) {
+            const cl_cpu_seg_1024_t *cpu = (const cl_cpu_seg_1024_t*)mon_map_segment(st, e_cpu, i);
+            if (cpu) {
+                load_sum += atomic_load(&cpu->hot_a.load_permille);
+                temp_sum += atomic_load(&cpu->hot_a.temp_c_x10);
+                if (i==0) {
+                     snprintf(model, sizeof(model), "%s %s", 
+                        cpu->cold_b.vendor_str, cpu->cold_b.model_str_a);
+                }
+            }
+        }
+        
+        uint32_t avg_load = (count > 0) ? (load_sum / count) : 0;
+        uint32_t avg_temp = (count > 0) ? (temp_sum / count) : 0; // x10
+
+        ui_draw_label_value(9, 4, "Model", model);
+        snprintf(tbuf, sizeof(tbuf), "%u Physical Cores", count);
+        ui_draw_label_value(10, 4, "Topology", tbuf);
+
+        /* Load Bar */
+        mvprintw(12, 4, "Avg Load:");
+        /* Load is permille (0-1000). Green < 50%, Yellow < 80%, Red > 80% */
+        int color = CL_COLOR_TEXT; // Standard Blau/Gelb
+        if (avg_load > 800) color = CL_COLOR_ALERT;
+        ui_draw_progressbar(13, 4, col_width-6, avg_load, color);
+
+        /* Temp Bar */
+        int temp_permille = avg_temp; // avg_temp ist x10, 450 = 45.0°C => 45%
+        snprintf(tbuf, sizeof(tbuf), "Thermals (%.1f %cC)", temp_c, ACS_DEGREE);
+        mvprintw(15, 4, "%s", tbuf);
+        
+        /* Temp Scaling: 0°C - 100°C maps to 0-1000 permille for bar */
+        int temp_permille = avg_temp; // da avg_temp schon x10 ist (450 = 45.0 = 45%)
+        if (temp_permille > 1000) temp_permille = 1000;
+        
+        int t_color = CL_COLOR_TEXT;
+        if (temp_c > 75.0) t_color = CL_COLOR_ALERT;
+        ui_draw_progressbar(16, 4, col_width-6, temp_permille, t_color);
+
+    } else {
+        mvprintw(10, 4, "No CPU Segment found.");
+    }
+
+
+    /* --- SECTION: MEMORY MATRIX (Rechts) --- */
+    ui_draw_box(7, col2_x, 14, col_width, "Memory Matrix");
+    
+    const cl_toc_entry_t *e_mem = mon_find_entry(st, toc, CL_MEM_SEG_256);
+    if (e_mem) {
+        const cl_mem_seg_256_t *mem = (const cl_mem_seg_256_t*)mon_map_segment(st, e_mem, 0);
+        if (mem) {
+            uint64_t total = atomic_load(&mem->hot.total_bytes);
+            uint64_t free  = atomic_load(&mem->hot.free_bytes);
+            uint64_t used  = total - free;
+            uint32_t press = atomic_load(&mem->hot.pressure_permille);
+
+            char s_tot[32], s_free[32], s_used[32];
+            fmt_size(s_tot, sizeof(s_tot), total);
+            fmt_size(s_free, sizeof(s_free), free);
+            fmt_size(s_used, sizeof(s_used), used);
+
+            ui_draw_label_value(9, col2_x+2,  "Total", s_tot);
+            ui_draw_label_value(10, col2_x+2, "Used ", s_used);
+            ui_draw_label_value(11, col2_x+2, "Free ", s_free);
+
+            /* Usage Bar */
+            int usage_permille = 0;
+            if (total > 0) usage_permille = (used * 1000) / total;
+            
+            mvprintw(13, col2_x+2, "RAM Usage:");
+            ui_draw_progressbar(14, col2_x+2, col_width-6, usage_permille, CL_COLOR_TEXT);
+
+            /* Pressure Bar (Memory Pressure Stall Information simulator) */
+            mvprintw(16, col2_x+2, "Pressure Index:");
+            int p_color = (press > 300) ? CL_COLOR_ALERT : CL_COLOR_TEXT;
+            ui_draw_progressbar(17, col2_x+2, col_width-6, press, p_color);
+        }
+    } else {
+        mvprintw(10, col2_x+2, "No MEM Segment found.");
+    }
+
+
+    /* --- SECTION: DATA PLANE / INFRA (Unten) --- */
+    /* Check for DMA or ZFS segments */
+    const cl_toc_entry_t *e_dma = mon_find_entry(st, toc, CL_DMA_SEG_4096);
+    const cl_toc_entry_t *e_zfs = mon_find_entry(st, toc, CL_ZFS_SEG_4096);
+
+    ui_draw_box(21, 2, 6, w-4, "Data Plane & Storage");
+
+    if (e_dma) {
+        /* DMA meist Ringbuffer */
+        ui_draw_label_value(23, 4, "DMA Engine", "ONLINE");
+        mvprintw(23, 30, "[Active Ring Handling]");
+    } else {
+        ui_draw_label_value(23, 4, "DMA Engine", "N/A");
+    }
+
+    if (e_zfs) {
+        const cl_zfs_seg_4096_t *zfs = (const cl_zfs_seg_4096_t*)mon_map_segment(st, e_zfs, 0);
+        if (zfs) {
+             /* HIER WAR DER FEHLER: Zugriff über .arc Unterstruktur */
+             uint64_t hits = atomic_load(&zfs->arc.arc_hits);
+             uint64_t miss = atomic_load(&zfs->arc.arc_misses);
+             uint64_t total_arc = hits + miss;
+             int ratio = 0;
+             if (total_arc > 0) ratio = (hits * 100) / total_arc;
+             
+             snprintf(tbuf, sizeof(tbuf), "ARC Hitrate: %d%%", ratio);
+             ui_draw_label_value(24, 4, "ZFS Cache", tbuf);
+        }
+    } else {
+        ui_draw_label_value(24, 4, "ZFS Cache", "No Segment");
+    }
+
+}
+
+void tab_dashboard_input(int key) {
+    (void)key;
+}
+
+<<< END FILE: ./tabs/tab_dashboard.c
+
+========================================
+ PROJECT STRUCTURE TREE
+========================================
+.
+├── monitor.c
+├── monitor_curses.h
+├── monitor_input.c
+├── monitor_input.h
+├── monitor_shm.c
+├── monitor_shm.h
+├── monitor_state.c
+├── monitor_state.h
+├── monitor_ui.c
+├── monitor_ui.h
+├── single_dump.sh
+├── tabs
+│   └── tab_dashboard.c
+└── tabs.h
+
+2 directories, 13 files

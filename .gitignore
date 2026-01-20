@@ -1,0 +1,20 @@
+# Build Output directories (Wir bauen neu für x86_64!)
+bin/
+build/
+
+# Object files & Libraries
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+
+# System junk
+.DS_Store
+Thumbs.db
+
+# Editor temp files
+*~
+*.swp
