@@ -196,7 +196,7 @@ $(CLD_BIN): $(CLD_OBJ) $(RUNTIME_COMMON_OBJ) | dirs
 cld: $(CLD_BIN)
 
 # Stub services
-$(CORE0_BIN): $(CORE0_OBJ) | dirs
+$(CORE0_BIN): $(CORE0_OBJ) $(RUNTIME_COMMON_OBJ) | dirs
 	$(CC) -o $@ $^ $(LDLIBS) $(LDFLAGS)
 core0: $(CORE0_BIN)
 

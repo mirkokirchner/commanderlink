@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdatomic.h>
+#include <inttypes.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>      /* O_RDWR */
@@ -34,8 +35,10 @@
 #include <time.h>
 
 #include "cl_runtime/cl_runtime.h"
+#include "cl_runtime/cl_abi_fingerprint.h"
 #include "cl_runtime/cl_service_seg_256.h"
 #include "cl_runtime/cl_identity_seg_256.h"
+#include "cl_runtime/cl_commit.h"
 #include "cl_manifest/cl_enums.h"
 
 /* ---------------- Zeit ---------------- */
@@ -84,10 +87,19 @@ typedef struct core_loc {
     cl_toc_entry_t *e_service;
     cl_toc_entry_t *e_identity;
 
+    cl_toc_entry_t *e_time;
+    cl_toc_entry_t *e_cpu0;
+    cl_toc_entry_t *e_nic0;
+
     cl_service_seg_256_t  *svc;
     cl_identity_seg_256_t *ids;
 
+    cl_time_seg_256_t      *time;
+    cl_cpu_seg_1024_t      *cpu0;
+    cl_nic_seg_512_t       *nic0;
+
     cl_service_slot_32_t  *slot_core;
+    cl_service_slot_32_t  *slot_hal;
 } core_loc_t;
 
 static int core_locate(void *core_base, size_t core_sz, core_loc_t *out) {
@@ -123,6 +135,21 @@ static int core_locate(void *core_base, size_t core_sz, core_loc_t *out) {
                 out->e_identity = e;
                 out->ids = (cl_identity_seg_256_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
             }
+        } else if ((uint16_t)e->type == (uint16_t)CL_TIME_SEG_256 && e->stride_bytes == 256u && e->count == 1u) {
+            if ((uint64_t)e->offset_bytes + 256ull <= (uint64_t)core_sz) {
+                out->e_time = e;
+                out->time = (cl_time_seg_256_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
+            }
+        } else if ((uint16_t)e->type == (uint16_t)CL_CPU_SEG_1024 && e->stride_bytes == 1024u && e->count == 1u) {
+            if ((uint64_t)e->offset_bytes + 1024ull <= (uint64_t)core_sz) {
+                out->e_cpu0 = e;
+                out->cpu0 = (cl_cpu_seg_1024_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
+            }
+        } else if ((uint16_t)e->type == (uint16_t)CL_NIC_SEG_512 && e->stride_bytes == 512u && e->count == 1u) {
+            if ((uint64_t)e->offset_bytes + 512ull <= (uint64_t)core_sz) {
+                out->e_nic0 = e;
+                out->nic0 = (cl_nic_seg_512_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
+            }
         }
     }
 
@@ -131,14 +158,10 @@ static int core_locate(void *core_base, size_t core_sz, core_loc_t *out) {
     out->slot_core = svc_slot(out->svc, CL_SVC_CORE0);
     if (!out->slot_core) return -21;
 
-    return 0;
-}
+    out->slot_hal = svc_slot(out->svc, CL_SVC_HAL0);
+    if (!out->slot_hal) return -22;
 
-/* ---------------- Epoch Publish (u64 Release) ----------------
- * SSOT: epoch ist u64. Wir publizieren via Release-Store als Commit.
- */
-static void toc_epoch_publish_u64(cl_toc_entry_t *e, uint64_t new_epoch) {
-    atomic_store_explicit((_Atomic(uint64_t) *)&e->epoch, new_epoch, memory_order_release);
+    return 0;
 }
 
 /* ---------------- Identity VALID Definition (Stage-1) ---------------- */
@@ -175,8 +198,19 @@ int main(void) {
 
     printf("core0: started pid=%d\n", (int)getpid());
 
+    /* Defense-in-depth: ABI muss zum Build passen (cld macht failfast). */
+    const uint64_t want_abi = cl_abi_fingerprint_u64();
+    if (loc.root->abi_layout_checksum != want_abi) {
+        printf("core0: ABI mismatch: shm=0x%016" PRIx64 " build=0x%016" PRIx64 " -> STOP\n",
+               loc.root->abi_layout_checksum, want_abi);
+        return 5;
+    }
+
     uint64_t epoch_ctr = 1;
     int last_valid = -1;
+
+    uint64_t last_e_time = 0, last_e_cpu = 0, last_e_nic = 0;
+    uint64_t last_e_time_ts = 0, last_e_cpu_ts = 0, last_e_nic_ts = 0;
 
     for (;;) {
         /* Heartbeat (Stage-1 Pflicht) */
@@ -188,6 +222,36 @@ int main(void) {
         }
         atomic_store_explicit(&loc.slot_core->last_heartbeat_ns, t, memory_order_relaxed);
 
+        /* HAL liveness gate (Stage-1): wenn HAL nicht tickt -> P0 Reason setzen. */
+        uint64_t hal_hb = atomic_load_explicit(&loc.slot_hal->last_heartbeat_ns, memory_order_acquire);
+        const uint64_t hal_age_ns = (hal_hb == 0ull) ? UINT64_MAX : (t - hal_hb);
+        const int hal_alive = (hal_hb != 0ull) && (hal_age_ns <= 1000000000ull); /* 1s */
+
+        /* HAL epoch freshness (Stage-1 contract): epochs must advance periodically.
+         * Threshold is intentionally conservative for early bring-up.
+         */
+        int hal_stale = 0;
+        const uint64_t stale_ns = 2000000000ull; /* 2s */
+
+        if (loc.e_time) {
+            const uint64_t e = cl_commit_epoch_load_acquire(loc.e_time);
+            if (e == 0ull) { hal_stale = 1; }
+            else if (e != last_e_time) { last_e_time = e; last_e_time_ts = t; }
+            else if (last_e_time_ts != 0ull && (t - last_e_time_ts) > stale_ns) { hal_stale = 1; }
+        }
+        if (loc.e_cpu0) {
+            const uint64_t e = cl_commit_epoch_load_acquire(loc.e_cpu0);
+            if (e == 0ull) { hal_stale = 1; }
+            else if (e != last_e_cpu) { last_e_cpu = e; last_e_cpu_ts = t; }
+            else if (last_e_cpu_ts != 0ull && (t - last_e_cpu_ts) > stale_ns) { hal_stale = 1; }
+        }
+        if (loc.e_nic0) {
+            const uint64_t e = cl_commit_epoch_load_acquire(loc.e_nic0);
+            if (e == 0ull) { hal_stale = 1; }
+            else if (e != last_e_nic) { last_e_nic = e; last_e_nic_ts = t; }
+            else if (last_e_nic_ts != 0ull && (t - last_e_nic_ts) > stale_ns) { hal_stale = 1; }
+        }
+
         /* Identity check */
         int valid = identity_is_valid(loc.ids);
 
@@ -196,14 +260,15 @@ int main(void) {
             last_valid = valid;
         }
 
-        if (!valid) {
+        if (!valid || !hal_alive || hal_stale) {
             /* P0 Gate: CORE setzt redirect_allowed konservativ 0.
              * Identity-State NICHT blind überschreiben (cld ist Producer).
              * Reason kann gesetzt werden, ohne state zu zerstören.
              */
-            atomic_store_explicit(&loc.ids->hot.reason_code,
-                                  (uint32_t)CL_REASON_P0_IDENTITY_INVALID,
-                                  memory_order_relaxed);
+            const uint32_t why = (!valid) ? (uint32_t)CL_REASON_P0_IDENTITY_INVALID
+                              : (!hal_alive) ? (uint32_t)CL_REASON_P0_HAL_MISSING
+                                             : (uint32_t)CL_REASON_P0_HAL_STALE;
+            atomic_store_explicit(&loc.ids->hot.reason_code, why, memory_order_relaxed);
 
             atomic_store_explicit(&loc.svc->g0.redirect_allowed, 0u, memory_order_relaxed);
         } else {
@@ -211,16 +276,18 @@ int main(void) {
             atomic_store_explicit(&loc.ids->hot.reason_code, (uint32_t)CL_REASON_NONE, memory_order_relaxed);
 
             /* Publish epochs once (Cut-Point) */
-            uint64_t e_id = atomic_load_explicit((_Atomic(uint64_t) *)&loc.e_identity->epoch, memory_order_acquire);
-            if (e_id == 0u) toc_epoch_publish_u64(loc.e_identity, epoch_ctr++);
+            uint64_t e_id = cl_commit_epoch_load_acquire(loc.e_identity);
+            if (e_id == 0u) cl_commit_epoch_store_release(loc.e_identity, epoch_ctr++);
 
             if (loc.e_service) {
-                uint64_t e_sv = atomic_load_explicit((_Atomic(uint64_t) *)&loc.e_service->epoch, memory_order_acquire);
-                if (e_sv == 0u) toc_epoch_publish_u64(loc.e_service, epoch_ctr++);
+                uint64_t e_sv = cl_commit_epoch_load_acquire(loc.e_service);
+                if (e_sv == 0u) cl_commit_epoch_store_release(loc.e_service, epoch_ctr++);
             }
 
             /* Stage-1 bleibt konservativ: redirect_allowed = 0 (Trust/Failsafe fehlen) */
             atomic_store_explicit(&loc.svc->g0.redirect_allowed, 0u, memory_order_relaxed);
+
+            /* Ingest is validation-only in Stage-1; payload use comes later. */
         }
 
         struct timespec ts = {0};

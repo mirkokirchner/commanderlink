@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (contracts-only)
+        run: |
+          make abi clinit cld stubs OS=linux
+
+      - name: ABI fingerprint gate
+        run: |
+          fp=$(./bin/linux/cl_abi_report | sed -n 's/^ABI fingerprint (CT): //p' | head -n 1)
+          exp=$(cat abi/expected_u64.txt | tr -d '\r\n')
+          echo "fingerprint=$fp expected=$exp"
+          test "$fp" = "$exp"

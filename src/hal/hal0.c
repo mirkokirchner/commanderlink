@@ -39,6 +39,7 @@
 #include "cl_runtime/cl_runtime.h"
 #include "cl_runtime/cl_service_seg_256.h"
 #include "cl_runtime/cl_quality.h"
+#include "cl_runtime/cl_commit.h"
 
 /* ---------------- Zeit ---------------- */
 static uint64_t now_ns(void) {
@@ -73,12 +74,32 @@ typedef struct hal_loc {
     cl_time_seg_256_t    *time;
     cl_cpu_seg_1024_t    *cpu0;
     cl_nic_seg_512_t     *nic0;
+
+    cl_toc_entry_t       *e_time;
+    cl_toc_entry_t       *e_cpu0;
+    cl_toc_entry_t       *e_nic0;
 } hal_loc_t;
+
+/* ---------------- Service slot mapping (driftfest, identisch zu cld/core0) -- */
+static cl_service_slot_32_t* svc_slot(cl_service_seg_256_t *s, cl_service_id_t id) {
+    switch (id) {
+        case CL_SVC_CORE0:   return &s->g1.s0;
+        case CL_SVC_HAL0:    return &s->g1.s1;
+        case CL_SVC_LINK0:   return &s->g2.s2;
+        case CL_SVC_FLOW0:   return &s->g2.s3;
+        case CL_SVC_ORACLE0: return &s->g3.s4;
+        case CL_SVC_MONITOR: return &s->g3.s5;
+        default: return NULL;
+    }
+}
 
 static int hal_locate(void *core_base, size_t core_sz, hal_loc_t *out) {
     memset(out, 0, sizeof(*out));
 
     cl_root_t *r = (cl_root_t*)core_base;
+    if (r->root_magic != CL_ROOT_MAGIC_U32) return -20;
+    if (r->schema_version != CL_SCHEMA_VERSION_U32) return -21;
+    if (r->endian_magic != CL_ENDIAN_MAGIC_U32) return -22;
     if (r->toc_size < sizeof(cl_toc_header_t)) return -1;
     if ((uint64_t)r->toc_offset + (uint64_t)r->toc_size > (uint64_t)core_sz) return -2;
 
@@ -87,15 +108,21 @@ static int hal_locate(void *core_base, size_t core_sz, hal_loc_t *out) {
     for (uint32_t i = 0; i < toc->header.entry_count && i < CL_TOC_MAX_ENTRIES; i++) {
         cl_toc_entry_t *e = &toc->entries[i];
 
+        /* Stage-1: HAL0 schreibt nur RESIDENT Core-Segmente; RECLAIMABLE skip */
+        if ((e->flags & CL_TOC_FLAG_RECLAIMABLE) != 0u) continue;
+
         if ((uint16_t)e->type == (uint16_t)CL_SERVICE_SEG_256) {
             out->svc = (cl_service_seg_256_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
-            out->slot_hal = &out->svc->g1.s1;
+            out->slot_hal = svc_slot(out->svc, CL_SVC_HAL0);
         } else if ((uint16_t)e->type == (uint16_t)CL_TIME_SEG_256) {
             out->time = (cl_time_seg_256_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
+            out->e_time = e;
         } else if ((uint16_t)e->type == (uint16_t)CL_CPU_SEG_1024) {
             out->cpu0 = (cl_cpu_seg_1024_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
+            out->e_cpu0 = e;
         } else if ((uint16_t)e->type == (uint16_t)CL_NIC_SEG_512) {
             out->nic0 = (cl_nic_seg_512_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
+            out->e_nic0 = e;
         }
     }
 
@@ -135,6 +162,8 @@ int main(void) {
         return 3;
     }
 
+    uint64_t epoch_ctr = 1;
+
     for (;;) {
         /* Heartbeat */
         atomic_store(&loc.slot_hal->last_heartbeat_ns, now_ns());
@@ -155,6 +184,9 @@ int main(void) {
             /* src/qual liegen in deinem TIME Layout im cold */
             loc.time->cold.src  = (uint8_t)CL_QUAL_BEST_EFFORT;
             loc.time->cold.qual = (uint8_t)CL_QUAL_BEST_EFFORT;
+
+            /* Commit (SSOT): TOC epoch publish ist der Segment-Commit-Marker */
+            if (loc.e_time) cl_commit_epoch_store_release(loc.e_time, epoch_ctr++);
         }
 
         /* ---------------- CPU0 ---------------- */
@@ -191,6 +223,8 @@ int main(void) {
             loc.cpu0->cold_a.src  = (uint8_t)CL_QUAL_UNSUPPORTED;
             loc.cpu0->cold_a.qual = (uint8_t)CL_QUAL_UNSUPPORTED;
 #endif
+
+            if (loc.e_cpu0) cl_commit_epoch_store_release(loc.e_cpu0, epoch_ctr++);
         }
 
         /* ---------------- NIC0 ---------------- */
@@ -200,6 +234,8 @@ int main(void) {
             /* src/qual liegen in deinem NIC Layout im cold_a */
             loc.nic0->cold_a.src  = (uint8_t)CL_QUAL_BEST_EFFORT;
             loc.nic0->cold_a.qual = (uint8_t)CL_QUAL_BEST_EFFORT;
+
+            if (loc.e_nic0) cl_commit_epoch_store_release(loc.e_nic0, epoch_ctr++);
         }
 
         struct timespec ts = {0};

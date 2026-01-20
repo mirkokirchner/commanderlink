@@ -49,7 +49,12 @@ static uint64_t fnv1a64_u64(uint64_t h, uint64_t v) {
 static uint64_t fnv1a64_u32(uint64_t h, uint32_t v) { return fnv1a64_u64(h, (uint64_t)v); }
 static uint64_t fnv1a64_sz(uint64_t h, size_t v) { return fnv1a64_u64(h, (uint64_t)v); }
 
-/* ABI-Fingerprint: compile-time Wahrheiten */
+/* ABI-Fingerprint: compile-time Wahrheiten
+ * NOTE: kept for forensic cross-checks; not used in Stage-1 default flow.
+ */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((unused))
+#endif
 static uint64_t cl_compute_abi_fingerprint(void) {
     uint64_t h = fnv1a64_init();
 

@@ -19,8 +19,12 @@ static uint64_t now_ns(void){ struct timespec ts; clock_gettime(CLOCK_MONOTONIC,
 static int map_core_rw(void **out_base, size_t *out_sz){
     int fd=shm_open(CL_CORE_SHM_NAME,O_RDWR,0); if(fd<0) return -1;
     struct stat st; if(fstat(fd,&st)!=0){close(fd);return -2;} if(st.st_size<=0){close(fd);return -3;}
-    void *p=mmap(NULL,(size_t)st.st_size,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0); close(fd);
-    if(p==MAP_FAILED) return -4; *out_base=p; *out_sz=(size_t)st.st_size; return 0;
+    void *p=mmap(NULL,(size_t)st.st_size,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);
+    close(fd);
+    if(p==MAP_FAILED) return -4;
+    *out_base=p;
+    *out_sz=(size_t)st.st_size;
+    return 0;
 }
 
 static cl_service_seg_256_t* find_service_seg(void *core_base){

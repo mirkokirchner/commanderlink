@@ -125,6 +125,10 @@ typedef enum {
     CL_REASON_NONE = 0,
     CL_REASON_P0_IDENTITY_INVALID = 1,
     CL_REASON_P0_IDENTITY_QUARANTINE = 2,
+    /* P0: HAL is missing or non-responsive (producer contract broken) */
+    CL_REASON_P0_HAL_MISSING = 3,
+    /* P0: HAL epochs are stale (commit marker not advancing) */
+    CL_REASON_P0_HAL_STALE = 4,
     CL_REASON_P1_TRUST_BLOCKED = 10,
     CL_REASON_P2_WATCHDOG = 20,
     CL_REASON_P3_BACKEND = 30,
