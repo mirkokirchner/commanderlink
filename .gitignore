@@ -18,3 +18,8 @@ Thumbs.db
 # Editor temp files
 *~
 *.swp
+
+# local artifacts
+commanderlink-src.tar.gz
+commanderlink_contracts_patch.diff
+contracts.patch
