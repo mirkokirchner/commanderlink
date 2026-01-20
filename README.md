@@ -1,119 +1,150 @@
-commanderlink/
-├── include/
-│   ├── cl_manifest/
-│   │   ├── cl_limits.h
-│   │   ├── cl_ids.h
-│   │   ├── cl_features.h
-│   │   ├── cl_link_modes.h
-│   │   ├── cl_wire.h
-│   │   ├── cl_oob.h
-│   │   └── cl_manifest.h
-│   ├── cl_common/
-│   │   ├── cl_atomic.h
-│   │   ├── cl_endian.h
-│   │   ├── cl_crc8.h
-│   │   ├── cl_time.h
-│   │   └── cl_tags.h
-│   ├── cl_runtime/
-│   │   ├── cl_toc.h
-│   │   ├── cl_global.h
-│   │   ├── cl_quality.h
-│   │   ├── cl_segments_cpu.h
-│   │   ├── cl_segments_nic.h
-│   │   ├── cl_segments_mem.h
-│   │   ├── cl_segments_pcie.h
-│   │   ├── cl_segments_board.h
-│   │   ├── cl_segments_time.h
-│   │   ├── cl_segments_link.h
-│   │   ├── cl_segments_budget.h
-│   │   ├── cl_segments_mesh.h
-│   │   ├── cl_segments_dma.h
-│   │   └── cl_segments_zfs.h
-│   ├── cl_hal/
-│   │   └── cl_hal.h
-│   ├── cl_core/
-│   │   └── cl_core.h
-│   ├── cl_flow/
-│   │   └── cl_flow.h
-│   ├── cl_link/
-│   │   └── cl_link.h
-│   ├── cl_oracle/
-│   │   └── cl_oracle.h
-│   └── cl_monitor/
-│       └── cl_monitor.h
-├── src/ (leer oder später)
-└── tools/ (leer oder später)
+# CommanderLink  
+**Deterministic Machine State Engine & Runtime Constitution Layer**
 
-src/monitor/
-├── monitor_main.c          # main loop, init ncurses, dispatch tabs
-├── monitor_state.c         # UI state (active tab, focus, selection, filter)
-├── monitor_state.h
-├── monitor_shm.c           # attach core/bulk shm, map pointers, bulk present
-├── monitor_shm.h
-├── monitor_toc.c           # helpers: find segment by type, compute record ptrs
-├── monitor_toc.h
-├── monitor_draw.c          # box/lines/colors/helpers, autoscaling layout grid
-├── monitor_draw.h
-├── monitor_keymap.c        # key handling (F1..F12, arrows, /, s, tab, h)
-├── monitor_keymap.h
-├── monitor_fmt.c           # formatting helpers (bps, ppm, us, ids short, Q|S)
-├── monitor_fmt.h
-├── tabs/
-│   ├── tab_dashboard.c     # F1
-│   ├── tab_inventory.c     # F2
-│   ├── tab_cpu.c           # F3
-│   ├── tab_memory.c        # F4
-│   ├── tab_nic.c           # F5
-│   ├── tab_mesh.c          # F6
-│   ├── tab_dma.c           # F7
-│   ├── tab_zfs.c           # F8
-│   ├── tab_pcie.c          # F9
-│   ├── tab_gpu.c           # F10
-│   ├── tab_oracle.c        # F11
-│   └── tab_audit.c         # F12
-└── tabs/tab_common.h       # shared tab helpers
+CommanderLink ist kein Monitoring-Tool.  
+CommanderLink ist ein **Maschinen-Wahrheitskern**, der auf jedem System eine einzige, deterministische, atomare und signierte Wahrheit über den Zustand der Maschine bereitstellt.
 
-Erweiterung: 
+Es ersetzt Heuristiken durch Verträge.  
+Es ersetzt Vermutungen durch deterministische Segmente.  
+Es ersetzt „Best Effort“ durch **Maschinenrecht**.
 
-commanderlink/
-├─ src/
-│  ├─ core/                     ← ZENTRALE SYSTEMWAHRHEIT
-│  │  ├─ cl_gates.h              ← HIER!
-│  │  ├─ cl_segment_types.h
-│  │  ├─ cl_toc.h
-│  │  ├─ cl_budget.h
-│  │  └─ cl_timebase.h
-│  │
-│  ├─ seg/                      ← RUNTIME-SEGMENTE (SHM)
-│  │  ├─ seg_cpu_1024.h
-│  │  ├─ seg_memory_256.h
-│  │  ├─ seg_nic_512.h
-│  │  ├─ seg_pcie_256.h
-│  │  ├─ seg_budget_256.h
-│  │  ├─ seg_overlay_256.h
-│  │  ├─ seg_watchdog_256.h
-│  │  ├─ seg_mesh_neighbor_256.h
-│  │  └─ seg_dma_4096.h
-│  │
-│  ├─ wire/                     ← DRAHTREALITÄT
-│  │  ├─ cl_wire_common.h
-│  │  ├─ cl_wire_clwp.h
-│  │  ├─ cl_wire_oob.h
-│  │  ├─ cl_wire_modes.h
-│  │  └─ cl_wire_limits.h
-│  │
-│  ├─ runtime/                  ← AKTIVE LOGIK (später)
-│  │  ├─ flow/
-│  │  ├─ link/
-│  │  └─ hal/
-│  │
-│  ├─ monitor/                  ← PASSIVER LESER
-│  ├─ tools/
-│  └─ tests/
-│
-├─ docs/
-│  ├─ laws/
-│  └─ contracts/
-│
-└─ Makefile
+CommanderLink ist ein **OS-adjazenter Wahrheitslayer**, der unterhalb klassischer Software arbeitet, ohne das Betriebssystem zu ersetzen.
 
+---
+
+## 🚀 Motivation
+
+Moderne Betriebssysteme liefern keine konsistente Wahrheit über ihren Zustand.  
+Sie bestehen aus Heuristiken, adaptiven Schedulern, Power-Management-Tricks, Treiber-Optimierungen und nicht-deterministischen Entscheidungen.
+
+Das Ergebnis:
+
+- unvorhersehbare Performance  
+- nicht reproduzierbare Latenzen  
+- unklare Ursachen für Ruckler, Drops, Spikes  
+- Monitoring, das nur Symptome sieht  
+- Telemetrie, die nicht vertrauenswürdig ist  
+
+CommanderLink löst dieses Problem durch:
+
+- **deterministische SHM-Segmente**  
+- **atomare Commits**  
+- **ABI-stabile Strukturen**  
+- **signierte Zustandsübergänge**  
+- **strikte HAL/CORE-Trennung**  
+- **Runtime-Verfassung (Laws & Contracts)**  
+
+CommanderLink liefert **Maschinenwahrheit**, nicht Interpretationen.
+
+---
+
+## 🧩 Architekturüberblick
+
+CommanderLink besteht aus mehreren klar getrennten Komponenten:
+
+### **HAL0 – Hardware Abstraction Layer**
+- Sammelt physische Maschinenzustände (CPU, Memory, NIC, DMA, PCIe, Time, Forensics)
+- Schreibt deterministische SHM-Segmente
+- Atomic Commit Contract: `PREPARE → WRITE → COMMIT`
+- Signiert alle Commits (ephemerer Signer)
+- Keine Interpretation, keine Heuristik
+
+### **CORE0 – Runtime Constitution**
+- Validiert alle HAL-Segmente
+- Erzwingt ABI-Fingerprint, CRC, Signatur, seq_no-Monotonie
+- Publiziert gültige Segmente
+- Quarantäne bei Verstößen
+- Gate-Engine & Budget-Mechanik
+
+### **LINK0 – Mesh & Cluster State**
+- Publiziert lokale Maschinenwahrheit an Nachbarn
+- Konsolidiert Cluster-Zustände
+- Optional, deterministisch, signiert
+
+### **FLOW0 – Event & Command Pipeline**
+- Deterministische Ereignisverarbeitung
+- Keine Threads, keine Races, keine Heuristik
+
+### **ORACLE0 – Predictive Quality Engine**
+- Nutzt deterministische Segmente für Vorhersagen
+- Keine ML-Heuristiken, nur Maschinenlogik
+
+### **MONITOR – Read-Only Operator Interface**
+- Curses-basierte UI
+- Zeigt SHM-Segmente, Health, Forensics
+- Strikt read-only
+
+### **SHM-SSOT – Single Source of Truth**
+- Atomare, signierte, ABI-stabile Segmentstruktur
+- Zero-Copy, Threadless, Deterministic
+
+---
+
+## 📐 Die Laws & Contracts
+
+CommanderLink basiert auf einer Reihe unverhandelbarer Gesetze:
+
+### **Zero-Laws**
+1. **Determinismus ist Pflicht**  
+2. **Identity ist absolut**  
+3. **Zeit ist monoton**  
+
+### **LAW_00–LAW_42 (Auszug)**
+- **LAW_01:** Memory is a Contract  
+- **LAW_12:** No Implicit Trust Paths  
+- **LAW_20:** ABI is Immutable  
+- **LAW_21:** Segments are Sacred  
+- **LAW_22:** Runtime Gates  
+- **LAW_25:** No Cross-Segment Leakage  
+- **LAW_28:** Health is First-Class  
+- **LAW_31:** Monitor is Read-Only  
+- **LAW_40:** Everything must be documented  
+- **LAW_41:** No Undefined Behavior  
+
+Die vollständigen Laws befinden sich im Ordner `/docs/laws/`.
+
+---
+
+## 🧬 SHM Segment Layout (SSOT)
+
+CommanderLink definiert ein festes, ABI-stabiles Layout:
+
+- **CPU Segment**  
+- **Memory Segment**  
+- **NIC Segment**  
+- **DMA Segment**  
+- **PCIe Segment**  
+- **Time Segment**  
+- **ZFS Segment**  
+- **Forensics Segment**  
+- **History Segment**  
+- **Mesh Segment**  
+- **Budget Segment**  
+
+Alle Segmente sind:
+
+- atomar  
+- signiert  
+- CRC-validiert  
+- ABI-stabil  
+- zero-copy  
+- deterministisch  
+
+Details: `/include/cl_runtime/`
+
+---
+
+## 🛠️ Build & Run
+
+### Voraussetzungen
+- C Compiler (GCC/Clang)
+- CMake
+- ncurses (für Monitor)
+- POSIX-kompatibles OS (Linux, FreeBSD, OmniOS)
+
+### Build
+```bash
+mkdir build
+cd build
+cmake ..
+make -j$(nproc)
