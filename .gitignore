@@ -23,3 +23,6 @@ Thumbs.db
 commanderlink-src.tar.gz
 commanderlink_contracts_patch.diff
 contracts.patch
+
+# local shell/pager artifacts
+how --name-only --oneline HEAD
