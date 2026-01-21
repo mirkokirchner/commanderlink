@@ -81,17 +81,10 @@ typedef struct hal_loc {
 } hal_loc_t;
 
 /* ---------------- Service slot mapping (driftfest, identisch zu cld/core0) -- */
-static cl_service_slot_32_t* svc_slot(cl_service_seg_256_t *s, cl_service_id_t id) {
-    switch (id) {
-        case CL_SVC_CORE0:   return &s->g1.s0;
-        case CL_SVC_HAL0:    return &s->g1.s1;
-        case CL_SVC_LINK0:   return &s->g2.s2;
-        case CL_SVC_FLOW0:   return &s->g2.s3;
-        case CL_SVC_ORACLE0: return &s->g3.s4;
-        case CL_SVC_MONITOR: return &s->g3.s5;
-        default: return NULL;
-    }
-}
+
+
+/* Bounds helper: avoid UB on TOC offsets. */
+#define HAL_BOUNDS_OK(_off, _need, _sz)             (((uint64_t)(_off)) + ((uint64_t)(_need)) <= ((uint64_t)(_sz)))
 
 static int hal_locate(void *core_base, size_t core_sz, hal_loc_t *out) {
     memset(out, 0, sizeof(*out));
@@ -112,15 +105,19 @@ static int hal_locate(void *core_base, size_t core_sz, hal_loc_t *out) {
         if ((e->flags & CL_TOC_FLAG_RECLAIMABLE) != 0u) continue;
 
         if ((uint16_t)e->type == (uint16_t)CL_SERVICE_SEG_256) {
+            if (!HAL_BOUNDS_OK(e->offset_bytes, sizeof(cl_service_seg_256_t), core_sz)) return -30;
             out->svc = (cl_service_seg_256_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
-            out->slot_hal = svc_slot(out->svc, CL_SVC_HAL0);
+            out->slot_hal = cl_service_slot(out->svc, CL_SVC_HAL0);
         } else if ((uint16_t)e->type == (uint16_t)CL_TIME_SEG_256) {
+            if (!HAL_BOUNDS_OK(e->offset_bytes, sizeof(cl_time_seg_256_t), core_sz)) return -30;
             out->time = (cl_time_seg_256_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
             out->e_time = e;
         } else if ((uint16_t)e->type == (uint16_t)CL_CPU_SEG_1024) {
+            if (!HAL_BOUNDS_OK(e->offset_bytes, sizeof(cl_cpu_seg_1024_t), core_sz)) return -30;
             out->cpu0 = (cl_cpu_seg_1024_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
             out->e_cpu0 = e;
         } else if ((uint16_t)e->type == (uint16_t)CL_NIC_SEG_512) {
+            if (!HAL_BOUNDS_OK(e->offset_bytes, sizeof(cl_nic_seg_512_t), core_sz)) return -30;
             out->nic0 = (cl_nic_seg_512_t*)((uint8_t*)core_base + (size_t)e->offset_bytes);
             out->e_nic0 = e;
         }
@@ -182,7 +179,7 @@ int main(void) {
             }
 
             /* src/qual liegen in deinem TIME Layout im cold */
-            loc.time->cold.src  = (uint8_t)CL_QUAL_BEST_EFFORT;
+            loc.time->cold.src  = (uint8_t)CL_SRC_OS_IFACE;
             loc.time->cold.qual = (uint8_t)CL_QUAL_BEST_EFFORT;
 
             /* Commit (SSOT): TOC epoch publish ist der Segment-Commit-Marker */
@@ -212,7 +209,7 @@ int main(void) {
             atomic_store(&loc.cpu0->hot_b.isa_state, (uint16_t)1u);
             atomic_store(&loc.cpu0->hot_b.simd_effective, (uint16_t)1u);
 
-            loc.cpu0->cold_a.src  = (uint8_t)CL_QUAL_BEST_EFFORT;
+            loc.cpu0->cold_a.src  = (uint8_t)CL_SRC_OS_IFACE;
             loc.cpu0->cold_a.qual = (uint8_t)CL_QUAL_BEST_EFFORT;
 #else
             atomic_store(&loc.cpu0->hot_b.isa_possible_mask, 0u);
@@ -220,7 +217,7 @@ int main(void) {
             atomic_store(&loc.cpu0->hot_b.isa_state, (uint16_t)0u);
             atomic_store(&loc.cpu0->hot_b.simd_effective, (uint16_t)0u);
 
-            loc.cpu0->cold_a.src  = (uint8_t)CL_QUAL_UNSUPPORTED;
+            loc.cpu0->cold_a.src  = (uint8_t)CL_SRC_OS_IFACE;
             loc.cpu0->cold_a.qual = (uint8_t)CL_QUAL_UNSUPPORTED;
 #endif
 
@@ -232,7 +229,7 @@ int main(void) {
             atomic_store(&loc.nic0->hot.reason_code, 0u);
 
             /* src/qual liegen in deinem NIC Layout im cold_a */
-            loc.nic0->cold_a.src  = (uint8_t)CL_QUAL_BEST_EFFORT;
+            loc.nic0->cold_a.src  = (uint8_t)CL_SRC_OS_IFACE;
             loc.nic0->cold_a.qual = (uint8_t)CL_QUAL_BEST_EFFORT;
 
             if (loc.e_nic0) cl_commit_epoch_store_release(loc.e_nic0, epoch_ctr++);

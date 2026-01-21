@@ -115,17 +115,6 @@ static int run_wait(const char *path, char *const argv[]) {
 }
 
 /* Service slot pointer: ordnet Service-ID auf festen Slot in 256B Segment. */
-static cl_service_slot_32_t* svc_slot(cl_service_seg_256_t *s, cl_service_id_t id) {
-    switch (id) {
-        case CL_SVC_CORE0:   return &s->g1.s0;
-        case CL_SVC_HAL0:    return &s->g1.s1;
-        case CL_SVC_LINK0:   return &s->g2.s2;
-        case CL_SVC_FLOW0:   return &s->g2.s3;
-        case CL_SVC_ORACLE0: return &s->g3.s4;
-        case CL_SVC_MONITOR: return &s->g3.s5;
-        default: return NULL;
-    }
-}
 
 /* Genesis-check (driftfest):
  * - Root basics ok?
@@ -206,6 +195,7 @@ static pid_t spawn_process(const char *path, const char *name) {
     if (pid < 0) return -1;
     if (pid == 0) {
         execl(path, name, (char*)NULL);
+        perror("cld: execl");
         _exit(127);
     }
     return pid;
@@ -220,7 +210,7 @@ static void reap_all(cl_proc_t *procs, size_t n, cl_service_seg_256_t *svc) {
 
         for (size_t i = 0; i < n; i++) {
             if (procs[i].pid == dead) {
-                cl_service_slot_32_t *sl = svc_slot(svc, procs[i].sid);
+                cl_service_slot_32_t *sl = cl_service_slot(svc, procs[i].sid);
 
                 atomic_store(&sl->running, 0u);
                 atomic_store(&sl->pid, 0u);
@@ -248,7 +238,7 @@ int main(void) {
     const char *os = detect_os_tag();
 
     char clinit_path[256];
-    snprintf(clinit_path, sizeof(clinit_path), "bin/%s/clinit", os);
+    snprintf(clinit_path, sizeof(clinit_path), "./bin/%s/clinit", os);
 
     /* 1) Genesis: wenn SHM fehlt oder Layout nicht passt -> clinit einmalig */
     if (!genesis_check_ro()) {
@@ -344,7 +334,7 @@ int main(void) {
 
     /* expected setzen (Stage-1: ORACLE=0, MONITOR=0) */
     for (int i = 0; i < (int)CL_SVC_MAX; i++) {
-        cl_service_slot_32_t *sl = svc_slot(svc, (cl_service_id_t)i);
+        cl_service_slot_32_t *sl = cl_service_slot(svc, (cl_service_id_t)i);
         if (!sl) continue;
 
         if (i == (int)CL_SVC_MONITOR)      atomic_store(&sl->expected, 0u);
@@ -364,13 +354,13 @@ int main(void) {
         { "flow0", CL_SVC_FLOW0, {0}, -1, 0, 0 },
     };
 
-    snprintf(procs[0].path, sizeof(procs[0].path), "bin/%s/core0", os);
-    snprintf(procs[1].path, sizeof(procs[1].path), "bin/%s/hal0", os);
-    snprintf(procs[2].path, sizeof(procs[2].path), "bin/%s/link0", os);
-    snprintf(procs[3].path, sizeof(procs[3].path), "bin/%s/flow0", os);
+    snprintf(procs[0].path, sizeof(procs[0].path), "./bin/%s/core0", os);
+    snprintf(procs[1].path, sizeof(procs[1].path), "./bin/%s/hal0", os);
+    snprintf(procs[2].path, sizeof(procs[2].path), "./bin/%s/link0", os);
+    snprintf(procs[3].path, sizeof(procs[3].path), "./bin/%s/flow0", os);
 
     for (size_t i = 0; i < sizeof(procs)/sizeof(procs[0]); i++) {
-        cl_service_slot_32_t *sl = svc_slot(svc, procs[i].sid);
+        cl_service_slot_32_t *sl = cl_service_slot(svc, procs[i].sid);
 
         pid_t pid = spawn_process(procs[i].path, procs[i].name);
         if (pid < 0) {
@@ -403,7 +393,7 @@ int main(void) {
         uint64_t tnow = now_ns();
 
         for (size_t i = 0; i < sizeof(procs)/sizeof(procs[0]); i++) {
-            cl_service_slot_32_t *sl = svc_slot(svc, procs[i].sid);
+            cl_service_slot_32_t *sl = cl_service_slot(svc, procs[i].sid);
             uint32_t expected = atomic_load(&sl->expected);
             if (!expected) continue;
 

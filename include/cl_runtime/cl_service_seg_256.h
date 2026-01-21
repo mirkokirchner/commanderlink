@@ -105,4 +105,20 @@ typedef struct CL_ALIGNAS(256) cl_service_seg_256 {
 } cl_service_seg_256_t;
 
 CL_STATIC_ASSERT(sizeof(cl_service_seg_256_t) == 256, "service seg muss 256B sein");
-
+/* SSOT: service id -> slot pointer (single source of truth)
+ * Returns NULL for unknown IDs. Eliminates slot drift across components.
+ */
+static inline cl_service_slot_32_t*
+cl_service_slot(cl_service_seg_256_t *svc, cl_service_id_t id)
+{
+    if (!svc) return NULL;
+    switch (id) {
+        case CL_SVC_CORE0:   return &svc->g1.s0;
+        case CL_SVC_HAL0:    return &svc->g1.s1;
+        case CL_SVC_LINK0:   return &svc->g2.s2;
+        case CL_SVC_FLOW0:   return &svc->g2.s3;
+        case CL_SVC_ORACLE0: return &svc->g3.s4;
+        case CL_SVC_MONITOR: return &svc->g3.s5;
+        default: return NULL;
+    }
+}

@@ -31,6 +31,7 @@
 #include <unistd.h>
 
 #include "cl_runtime/cl_runtime.h" /* SSOT Frontdoor */
+#include "cl_runtime/cl_service_seg_256.h"
 
 /* -------------------------------------------------------------------------
  * Time (monotonic)
@@ -70,17 +71,6 @@ static int map_core_rw(void **out_base, size_t *out_sz) {
 /* -------------------------------------------------------------------------
  * SSOT: service slot mapping (must match cld/core0)
  * ------------------------------------------------------------------------- */
-static cl_service_slot_32_t *svc_slot(cl_service_seg_256_t *s, cl_service_id_t id) {
-    switch (id) {
-        case CL_SVC_CORE0:   return &s->g1.s0;
-        case CL_SVC_HAL0:    return &s->g1.s1;
-        case CL_SVC_LINK0:   return &s->g2.s2;
-        case CL_SVC_FLOW0:   return &s->g2.s3;
-        case CL_SVC_ORACLE0: return &s->g3.s4;
-        case CL_SVC_MONITOR: return &s->g3.s5;
-        default: return NULL;
-    }
-}
 
 /* -------------------------------------------------------------------------
  * Locate Service Segment via TOC (bounds + presence)
@@ -120,7 +110,7 @@ static int locate_service(void *core_base, size_t core_sz,
     }
     if (!svc) return -9;
 
-    cl_service_slot_32_t *slot = svc_slot(svc, CL_SVC_FLOW0);
+    cl_service_slot_32_t *slot = cl_service_slot(svc, CL_SVC_FLOW0);
     if (!slot) return -10;
 
     *out_root = root;

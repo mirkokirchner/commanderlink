@@ -16,7 +16,7 @@
  *
  * SSOT-Details:
  *   - Service slot mapping darf NICHT hart verdrahtet sein (driftgefährlich):
- *     -> svc_slot() identisch zu cld, nutze CL_SVC_CORE0
+ *     -> cl_service_slot() identisch zu cld, nutze CL_SVC_CORE0
  *   - TOC epoch publish: Release-Store auf e->epoch (Commit-Marker)
  * ============================================================================
  */
@@ -67,17 +67,6 @@ static int map_core_rw(void **out_base, size_t *out_sz) {
 }
 
 /* ---------------- Service slot mapping (driftfest, identisch zu cld) ------ */
-static cl_service_slot_32_t* svc_slot(cl_service_seg_256_t *s, cl_service_id_t id) {
-    switch (id) {
-        case CL_SVC_CORE0:   return &s->g1.s0;
-        case CL_SVC_HAL0:    return &s->g1.s1;
-        case CL_SVC_LINK0:   return &s->g2.s2;
-        case CL_SVC_FLOW0:   return &s->g2.s3;
-        case CL_SVC_ORACLE0: return &s->g3.s4;
-        case CL_SVC_MONITOR: return &s->g3.s5;
-        default: return NULL;
-    }
-}
 
 /* ---------------- Locator ---------------- */
 typedef struct core_loc {
@@ -155,10 +144,10 @@ static int core_locate(void *core_base, size_t core_sz, core_loc_t *out) {
 
     if (!out->svc || !out->ids || !out->e_identity) return -20;
 
-    out->slot_core = svc_slot(out->svc, CL_SVC_CORE0);
+    out->slot_core = cl_service_slot(out->svc, CL_SVC_CORE0);
     if (!out->slot_core) return -21;
 
-    out->slot_hal = svc_slot(out->svc, CL_SVC_HAL0);
+    out->slot_hal = cl_service_slot(out->svc, CL_SVC_HAL0);
     if (!out->slot_hal) return -22;
 
     return 0;
